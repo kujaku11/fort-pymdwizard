@@ -47,6 +47,7 @@ the copyright owner.
 ------------------------------------------------------------------------------
 """
 
+from pathlib import Path
 import struct
 import datetime
 import decimal
@@ -75,6 +76,132 @@ except:
 
 from pymdwizard.core import utils
 
+def file_exists(fname: Path) -> bool:
+    """
+    _summary_
+
+    Parameters
+    ----------
+    fname : Path
+        _description_
+
+    Returns
+    -------
+    bool
+        _description_
+
+    Raises
+    ------
+    FileExistsError
+        _description_
+    """
+
+    if not fname.exists():
+        raise FileExistsError(f"Could not find file {fname}. Check path.")
+    return True
+
+def to_path_object(fname) -> Path:
+    """
+    _summary_
+
+    Parameters
+    ----------
+    fname : _type_
+        _description_
+
+    Returns
+    -------
+    Path
+        _description_
+    """
+    try:
+        fname = Path(fname)
+        if file_exists(fname):
+            return fname
+    except Exception as error:
+        raise TypeError(f"Could not convert file name to a Path object. {error}")
+    
+
+def file_is_large(fname, large=1E8) -> bool:
+    """
+    Check to see how large the file is to read in.
+
+    Parameters
+    ----------
+    fname : string or pathlib.Path
+            full path to file to read in
+
+    Returns
+    -------
+    bool
+        _description_
+    """
+    fname = to_path_object(fname)
+
+    file_size = fname.stat().st_size
+
+    if file_size / large > 1:
+        return True
+    return False
+
+def get_file_encoding(fname: Path, delimiter: str=",") -> str:
+    n_rows = 2
+    try:
+        df = pd.read_csv(
+            fname,
+            parse_dates=True,
+            delimiter=delimiter,
+            nrows=n_rows,
+            na_filter=False,
+            comment="#",
+        )
+        return 
+    except UnicodeDecodeError:
+        try:
+            df = pd.read_csv(
+                fname,
+                parse_dates=True,
+                encoding="utf8",
+                delimiter=delimiter,
+                nrows=n_rows,
+                na_filter=False,
+                comment="#",
+            )
+            return "utf8"
+        except UnicodeDecodeError:
+            try:
+                df = pd.read_csv(
+                    fname,
+                    parse_dates=True,
+                    encoding="ISO-8859-1",
+                    delimiter=delimiter,
+                    nrows=n_rows,
+                    na_filter=False,
+                    comment="#",
+                )
+                return "ISO-8859-1"
+            except UnicodeDecodeError:
+                raise UnicodeEncodeError(f"Could not decode {fname}")
+            
+def chunk_read(fname: Path, delimiter: str, encoding: str, chunk_size=10000) -> pd.DataFrame:
+    pd_iterator = pd.read_csv(fname,
+                parse_dates=True,
+                encoding="utf8",
+                delimiter=delimiter,
+                na_filter=False,
+                comment="#", chunksize=chunk_size,
+                iterator=True)
+    
+    min_max_df_list = []
+    
+    for chunk_df in pd_iterator:
+         min_max_df_list.append(chunk_df.max(axis=0).to_frame())
+         min_max_df_list.append(chunk_df.min(axis=0).to_frame())
+    
+    min_max_df = pd.concat(min_max_df_list)
+    return pd.concat([min_max_df.min(axis=0).to_frame(), min_max_df.max(axis=0).to_frame()])
+
+
 
 def read_csv(fname, delimiter=","):
     """
@@ -91,6 +218,10 @@ def read_csv(fname, delimiter=","):
     -------
     pandas dataframe
     """
+    encoding = get_file_encoding(fname, delimiter=delimiter)
+
+    if file_is_large(fname):
+
 
     max_rows = int(utils.get_setting("maxrows", 1000000))
     try:
