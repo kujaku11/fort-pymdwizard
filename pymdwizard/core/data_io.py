@@ -20,14 +20,14 @@ SCRIPT DEPENDENCIES
 ------------------------------------------------------------------------------
     This script is part of the pymdwizard package and is not intented to be
     used independently.  All pymdwizard package requirements are needed.
-    
+
     See imports section for external packages used in this script as well as
     inter-package dependencies
 
 
 U.S. GEOLOGICAL SURVEY DISCLAIMER
 ------------------------------------------------------------------------------
-This software has been approved for release by the U.S. Geological Survey 
+This software has been approved for release by the U.S. Geological Survey
 (USGS). Although the software has been subjected to rigorous review,
 the USGS reserves the right to update the software as needed pursuant to
 further analysis and review. No warranty, expressed or implied, is made by
@@ -76,53 +76,33 @@ except:
 
 from pymdwizard.core import utils
 
-def file_exists(fname: Path) -> bool:
+
+def to_path_object(fname: str) -> Path:
     """
-    _summary_
+    Convert the file path to a Path object and check if the file exists.
 
     Parameters
     ----------
-    fname : Path
-        _description_
-
-    Returns
-    -------
-    bool
-        _description_
-
-    Raises
-    ------
-    FileExistsError
-        _description_
-    """
-
-    if not fname.exists():
-        raise FileExistsError(f"Could not find file {fname}. Check path.")
-    return True
-
-def to_path_object(fname) -> Path:
-    """
-    _summary_
-
-    Parameters
-    ----------
-    fname : _type_
-        _description_
+    fname : string
+        full path to file
 
     Returns
     -------
     Path
-        _description_
+        full path to file as a Path object.
     """
+
     try:
         fname = Path(fname)
-        if file_exists(fname):
+        if not fname.exists():
+            raise FileExistsError(f"Could not find file {fname}. Check path.")
+        else:
             return fname
     except Exception as error:
         raise TypeError(f"Could not convert file name to a Path object. {error}")
-    
 
-def file_is_large(fname, large=1E8) -> bool:
+
+def file_is_large(fname, large: int = 1e9) -> bool:
     """
     Check to see how large the file is to read in.
 
@@ -131,10 +111,13 @@ def file_is_large(fname, large=1E8) -> bool:
     fname : string or pathlib.Path
             full path to file to read in
 
+    large : int
+            What is considered large. Default is 1E9 bytes (1Gb)
+
     Returns
     -------
     bool
-        _description_
+        True if the file size is larger than `large`, False if not.
     """
     fname = to_path_object(fname)
 
@@ -144,8 +127,37 @@ def file_is_large(fname, large=1E8) -> bool:
         return True
     return False
 
-def get_file_encoding(fname: Path, delimiter: str=",") -> str:
-    n_rows = 2
+
+def get_file_encoding(fname: Path, delimiter: str = ",") -> str:
+    """
+    Get file encoding of a CSV through trial an error.  There
+    maybe a better way to identify the encoding using chardet
+
+    encoding_list = []
+    with open(fn, "rb") as fid:
+        for line in fid.readlines(5000):
+            encoding_list.append(chardet.detect(line))
+    encoding_df = pd.DataFrame(encoding_list)
+    return(encoding_df["encoding"].mode()[0])
+
+    Parameters
+    ----------
+    fname : Path
+        full path to file
+    delimiter : str, optional
+        delimiter of file, by default ","
+
+    Returns
+    -------
+    str
+        encoding [None (ascii) | utf8 | ISO-8859-1]
+
+    Raises
+    ------
+    UnicodeEncodeError
+        _description_
+    """
+    n_rows = 10
     try:
         df = pd.read_csv(
             fname,
@@ -155,7 +167,7 @@ def get_file_encoding(fname: Path, delimiter: str=",") -> str:
             na_filter=False,
             comment="#",
         )
-        return 
+        return
     except UnicodeDecodeError:
         try:
             df = pd.read_csv(
@@ -182,25 +194,50 @@ def get_file_encoding(fname: Path, delimiter: str=",") -> str:
                 return "ISO-8859-1"
             except UnicodeDecodeError:
                 raise UnicodeEncodeError(f"Could not decode {fname}")
-            
-def chunk_read(fname: Path, delimiter: str, encoding: str, chunk_size=10000) -> pd.DataFrame:
-    pd_iterator = pd.read_csv(fname,
-                parse_dates=True,
-                encoding="utf8",
-                delimiter=delimiter,
-                na_filter=False,
-                comment="#", chunksize=chunk_size,
-                iterator=True)
-    
-    min_max_df_list = []
-    
-    for chunk_df in pd_iterator:
-         min_max_df_list.append(chunk_df.max(axis=0).to_frame())
-         min_max_df_list.append(chunk_df.min(axis=0).to_frame())
-    
-    min_max_df = pd.concat(min_max_df_list)
-    return pd.concat([min_max_df.min(axis=0).to_frame(), min_max_df.max(axis=0).to_frame()])
 
+
+def chunk_read(
+    fname: Path, delimiter: str, encoding: str = None, chunk_size: int = 1e6
+) -> pd.DataFrame:
+    """
+    Read a large CSV file in chunks and return just the min and max values
+    for each column for the entire dataframe.
+
+    Parameters
+    ----------
+    fname : Path
+        full path to CSV file
+    delimiter : str
+        delimiter of CSV file
+    encoding : str, optional
+        encoding of the CSV file, default None
+    chunk_size : int, optional
+        chunk size, by default 1E6
+
+    Returns
+    -------
+    pd.DataFrame
+        a data frame of just the min and max values for each column.
+    """
+    pd_iterator = pd.read_csv(
+        fname,
+        parse_dates=True,
+        encoding=encoding,
+        delimiter=delimiter,
+        na_filter=False,
+        comment="#",
+        chunksize=chunk_size,
+        iterator=True,
+        memory_map=True,
+    )
+
+    min_max_df_list = []
+
+    for chunk_df in pd_iterator:
+        min_max_df_list.append(chunk_df.agg(["min", "max"]))
+
+    min_max_df = pd.concat(min_max_df_list, ignore_index=True)
+    return min_max_df.agg(["min", "max"])
 
 
 def read_csv(fname, delimiter=","):
@@ -221,41 +258,20 @@ def read_csv(fname, delimiter=","):
     encoding = get_file_encoding(fname, delimiter=delimiter)
 
     if file_is_large(fname):
+        return chunk_read(fname, delimiter, encoding)
 
-
-    max_rows = int(utils.get_setting("maxrows", 1000000))
-    try:
+    else:
         df = pd.read_csv(
             fname,
             parse_dates=True,
+            encoding="utf8",
             delimiter=delimiter,
-            nrows=max_rows,
             na_filter=False,
             comment="#",
+            memory_map=True,
         )
-    except UnicodeDecodeError:
-        try:
-            df = pd.read_csv(
-                fname,
-                parse_dates=True,
-                encoding="utf8",
-                delimiter=delimiter,
-                nrows=max_rows,
-                na_filter=False,
-                comment="#",
-            )
-        except UnicodeDecodeError:
-            df = pd.read_csv(
-                fname,
-                parse_dates=True,
-                encoding="ISO-8859-1",
-                delimiter=delimiter,
-                nrows=max_rows,
-                na_filter=False,
-                comment="#",
-            )
 
-    return df
+        return df.agg(["min", "max"])
 
 
 def read_shp(fname):
@@ -279,7 +295,7 @@ def read_shp(fname):
     df = df[[c for c in df.columns if c != "geometry"]]
     df.insert(0, "Shape", c.schema["geometry"])
     df.insert(0, "FID", range(df.shape[0]))
-    return df
+    return df.agg(["min", "max"])
 
 
 def dbfreader(f):
@@ -398,10 +414,10 @@ def read_excel(fname, sheet_name):
         pandas dataframe
     """
     if fname.endswith(".xlsx") or fname.endswith(".xlsm"):
-        df = pd.read_excel(fname, sheet_name, engine='openpyxl')
+        df = pd.read_excel(fname, sheet_name, engine="openpyxl")
     else:
         df = pd.read_excel(fname, sheet_name)
-    return df
+    return df.agg(["min", "max"])
 
 
 def read_las(fname):
@@ -430,7 +446,7 @@ def read_las(fname):
     point_data = {dim: np.array(points[dim]) for dim in dims}
     df = pd.DataFrame(point_data)
 
-    return df
+    return df.agg(["min", "max"])
 
 
 def read_data(fname, sheet_name="", delimiter=","):
