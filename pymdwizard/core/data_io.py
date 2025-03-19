@@ -548,3 +548,55 @@ def clean_nodata(series, nodata=None):
             pass
 
     return clean_series
+
+
+def get_df_info(df: pd.DataFrame, int_is_unique: bool = True) -> dict:
+    """
+    Get the information from a data frame that would be need to populate
+    metadata.
+
+    - If the column is of type float, then get the min/max values
+    - If type int get unique values if int_is_unique = True, otherwise
+      get min/max of ints
+    - If string or object get unique values
+    - If datetime get min/max
+
+    Parameters
+    ----------
+    df : _type_
+        _description_
+    """
+    described = df.describe(include="all")
+
+    info_dict = {}
+
+    def fill_numeric_dict(col, dataframe):
+        info_dict[col] = {
+            "unique_values": None,
+            "min": dataframe.loc["min", col],
+            "max": dataframe.loc["max", col],
+            "std": dataframe.loc["std", col],
+        }
+
+    def fill_category_dict(col, dataframe):
+        info_dict[col] = {
+            "unique_values": dataframe[col].unique().to_list(),
+            "min": None,
+            "max": None,
+            "std": None,
+        }
+
+    for col in df.columns:
+        # if a string get unique values
+        if df.dtypes[col].name in ["object"]:
+            fill_category_dict(col, df)
+        elif "int" in df.dtypes[col].name and int_is_unique == True:
+            fill_category_dict(col, df)
+        elif "int" in df.dtypes[col].name and int_is_unique == False:
+            fill_numeric_dict(col, described)
+        elif "datetime" in df.dtypes[col].name:
+            fill_numeric_dict(col, described)
+        else:
+            fill_numeric_dict(col, described)
+
+    return info_dict
